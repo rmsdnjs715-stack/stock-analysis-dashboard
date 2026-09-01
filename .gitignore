@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Logs
+*.log
+
+# Streamlit secrets (KRX 계정 — 절대 커밋 금지)
+.streamlit/secrets.toml
+
+# 생성물
+output/
+
+# 백업 파일
+*.backup_*.xlsx
+
+# 로컬 도구 설정
+.claude/settings.local.json
