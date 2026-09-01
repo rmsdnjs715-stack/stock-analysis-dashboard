@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src import config, fred_client
 from src.indicators import _classify_error, _source_url
-from src.screener import _market_cap_usd
+from src.screener import _market_cap_usd, _max_drawdown_pct
 
 
 class TestFredYoy(unittest.TestCase):
@@ -53,6 +53,25 @@ class TestScreenerCurrencyNormalization(unittest.TestCase):
         """환율 조회 실패 시 None을 반환해 랭킹에서 제외되게 한다 (잘못된 비교 방지)."""
         entry = {"market_cap": 400_000_000_000_000, "currency": "KRW"}
         self.assertIsNone(_market_cap_usd(entry, krw_per_usd=None))
+
+
+class TestMaxDrawdown(unittest.TestCase):
+    """최대 낙폭(MDD)이 누적 최고가 기준으로 peak-to-trough를 잡는지 검증."""
+
+    def test_monotonic_increase_has_no_drawdown(self):
+        self.assertEqual(_max_drawdown_pct([10.0, 11.0, 12.0, 13.0]), 0.0)
+
+    def test_simple_peak_to_trough(self):
+        # 고점 100 → 저점 60 = -40%
+        self.assertAlmostEqual(_max_drawdown_pct([50.0, 100.0, 80.0, 60.0, 90.0]), -40.0)
+
+    def test_uses_running_peak_not_recovery(self):
+        # 100→50(-50%) 회복 후 200→150(-25%). 최대 낙폭은 -50%로 잡혀야 한다.
+        self.assertAlmostEqual(_max_drawdown_pct([100.0, 50.0, 200.0, 150.0]), -50.0)
+
+    def test_too_short_returns_none(self):
+        self.assertIsNone(_max_drawdown_pct([100.0]))
+        self.assertIsNone(_max_drawdown_pct([]))
 
 
 class TestCustomTickerValidation(unittest.TestCase):

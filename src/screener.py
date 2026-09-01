@@ -23,6 +23,27 @@ from . import config, technical, yahoo_client
 _yahoo = yahoo_client.YahooClient()
 _QS_MODULES = ["price", "summaryDetail", "defaultKeyStatistics", "financialData"]
 _MAX_WORKERS = 8  # 너무 크면 Yahoo가 순간적으로 429(rate limit)를 줄 수 있어 적당히 제한
+_TRADING_DAYS_1Y = 252  # MDD(최대낙폭) 계산 구간 - 최근 1년치 일봉
+
+
+def _max_drawdown_pct(closes: list[float]) -> float | None:
+    """주어진 종가 구간의 최대 낙폭(peak-to-trough) %. 0 이하의 값으로 반환한다.
+
+    누적 최고가(running peak)를 기준으로 각 시점의 하락률을 재고 그중 최솟값을
+    돌려준다 - 전체 최고가가 아니라 "그 시점까지의 최고가" 대비라서, 한 번 회복한
+    뒤 새 고점에서 다시 빠진 낙폭도 각각 따로 잡힌다.
+    """
+    if len(closes) < 2:
+        return None
+    peak = closes[0]
+    max_dd = 0.0
+    for price in closes:
+        if price > peak:
+            peak = price
+        dd = (price - peak) / peak * 100
+        if dd < max_dd:
+            max_dd = dd
+    return max_dd
 
 
 def _price_history(ticker: str) -> list[tuple[date, float]]:
@@ -73,7 +94,12 @@ def _fetch_one(ticker: str) -> dict[str, Any]:
     closes = [c for _, c in hist]
     ath = max(closes) if closes else None
     drawdown_pct = (current_price - ath) / ath * 100 if ath and current_price else None
+    mdd_1y_pct = _max_drawdown_pct(closes[-_TRADING_DAYS_1Y:]) if closes else None
     tech = technical.technical_summary(closes[-400:]) if closes else {}
+
+    fwd_per = yahoo_client.raw(summary.get("forwardPE"))
+    if fwd_per is None:  # 일부 종목은 forwardPE가 defaultKeyStatistics 쪽에만 있다
+        fwd_per = yahoo_client.raw(keystats.get("forwardPE"))
 
     return {
         "ticker": ticker,
@@ -82,11 +108,13 @@ def _fetch_one(ticker: str) -> dict[str, Any]:
         "currency": price_mod.get("currency"),
         "price": current_price,
         "per": yahoo_client.raw(summary.get("trailingPE")),
+        "fwd_per": fwd_per,
         "eps": yahoo_client.raw(keystats.get("trailingEps")),
         "roe_pct": roe * 100 if roe is not None else None,
         "cash": cash,
         "ath": ath,
         "drawdown_pct": drawdown_pct,
+        "mdd_1y_pct": mdd_1y_pct,
         "technical": tech,
         # history_error: 가격 히스토리(전고점/기술적지표)만 조회 실패한 경우의 사유.
         # 종목 자체는 정상 조회됐으니 error=None으로 두고 이 필드로만 구분한다 -

@@ -183,6 +183,10 @@ _METRIC_INFO: dict[str, dict[str, str]] = {
         "공식": "현재가 ÷ EPS(주당순이익)",
         "해석": "낮을수록 이익 대비 저평가로 봄. 다만 업종 평균과 비교해야 의미가 있고, 성장주는 원래 높게 거래되는 편이라 절대 기준은 아님",
     },
+    "포워드PER": {
+        "공식": "현재가 ÷ 향후 12개월 예상 EPS(애널리스트 컨센서스)",
+        "해석": "현재 PER보다 낮으면 이익이 늘 것으로 기대된다는 뜻. 예상치 기반이라 실제와 빗나갈 수 있어 참고용",
+    },
     "EPS": {
         "공식": "당기순이익 ÷ 발행주식수",
         "해석": "높을수록 좋음 - 주식 1주가 벌어들이는 이익이 크다는 뜻",
@@ -198,6 +202,10 @@ _METRIC_INFO: dict[str, dict[str, str]] = {
     "전고점대비": {
         "공식": "(현재가 − 상장 이후 역대 최고가) ÷ 최고가 × 100",
         "해석": "0에 가까울수록 전고점 근접. 많이 하락해 있으면 저가매수 기회일 수도, 추세가 꺾인 신호일 수도 있어 맥락 확인이 필요",
+    },
+    "MDD(1년)": {
+        "공식": "최근 1년(252거래일) 중 (저점 − 그 이전 누적 고점) ÷ 고점 × 100의 최솟값",
+        "해석": "지난 1년간 고점에서 최대 얼마나 빠졌는지. 0에 가까울수록 낙폭이 얕았다는 뜻 - 변동성·하방 위험의 크기를 봄",
     },
     "RSI(14)": {
         "공식": "100 − 100 ÷ (1 + 평균상승폭÷평균하락폭), 14일 기준",
@@ -328,16 +336,18 @@ def _render_stock_card(entry: dict[str, Any] | None, name: str, ticker: str) -> 
     t = entry.get("technical") or {}
     st.metric("현재가", f"{_fmt(entry.get('price'), 0)} {entry.get('currency') or ''}")
 
-    m1, m2, m3, m4 = st.columns(4)
+    m1, m2, m3, m4, m5 = st.columns(5)
     m1.metric("PER", _fmt(entry.get("per")), help=_help("PER"))
-    m2.metric("EPS", _fmt(entry.get("eps"), 0), help=_help("EPS"))
-    m3.metric("ROE", f"{_fmt(entry.get('roe_pct'), 1)}%", help=_help("ROE"))
-    m4.metric("시가총액", f"{_fmt(entry.get('market_cap_usd_bil'), 1)}억$", help=_help("시가총액"))
+    m2.metric("포워드PER", _fmt(entry.get("fwd_per")), help=_help("포워드PER"))
+    m3.metric("EPS", _fmt(entry.get("eps"), 0), help=_help("EPS"))
+    m4.metric("ROE", f"{_fmt(entry.get('roe_pct'), 1)}%", help=_help("ROE"))
+    m5.metric("시가총액", f"{_fmt(entry.get('market_cap_usd_bil'), 1)}억$", help=_help("시가총액"))
 
-    m5, m6, m7 = st.columns(3)
-    m5.metric("전고점대비", f"{_fmt(entry.get('drawdown_pct'), 1)}%", help=_help("전고점대비"))
-    m6.metric("RSI(14)", f"{_fmt(t.get('rsi14'), 1)} ({t.get('rsi_regime', 'N/A')})", help=_help("RSI(14)"))
-    m7.metric("MACD", t.get("macd_regime", "N/A"), help=_help("MACD"))
+    m6, m7, m8, m9 = st.columns(4)
+    m6.metric("전고점대비", f"{_fmt(entry.get('drawdown_pct'), 1)}%", help=_help("전고점대비"))
+    m7.metric("MDD(1년)", f"{_fmt(entry.get('mdd_1y_pct'), 1)}%", help=_help("MDD(1년)"))
+    m8.metric("RSI(14)", f"{_fmt(t.get('rsi14'), 1)} ({t.get('rsi_regime', 'N/A')})", help=_help("RSI(14)"))
+    m9.metric("MACD", t.get("macd_regime", "N/A"), help=_help("MACD"))
 
     st.caption(f"이평배열: {t.get('cross_20_60', 'N/A')} (MA20 {_fmt(t.get('ma20'))} / MA60 {_fmt(t.get('ma60'))} / "
                f"MA120 {_fmt(t.get('ma120'))} / MA200 {_fmt(t.get('ma200'))})")
@@ -413,9 +423,11 @@ with tab_main:
             table.append({
                 "순위": i, "티커": r["ticker"], "종목명": r.get("name", ""),
                 "시가총액($B)": r.get("market_cap_usd_bil"), "현재가": r.get("price"),
-                "통화": r.get("currency"), "PER": r.get("per"), "EPS": r.get("eps"),
+                "통화": r.get("currency"), "PER": r.get("per"),
+                "포워드PER": r.get("fwd_per"), "EPS": r.get("eps"),
                 "ROE(%)": round(r["roe_pct"], 1) if r.get("roe_pct") is not None else None,
                 "전고점대비(%)": round(r["drawdown_pct"], 1) if r.get("drawdown_pct") is not None else None,
+                "MDD1년(%)": round(r["mdd_1y_pct"], 1) if r.get("mdd_1y_pct") is not None else None,
                 "이평배열": t.get("cross_20_60", "N/A"),
                 "RSI(14)": round(t["rsi14"], 1) if t.get("rsi14") is not None else None,
                 "RSI상태": t.get("rsi_regime", "N/A"),
@@ -425,10 +437,12 @@ with tab_main:
             table, use_container_width=True, hide_index=True,
             column_config={
                 "PER": st.column_config.NumberColumn(help=_help("PER")),
+                "포워드PER": st.column_config.NumberColumn(help=_help("포워드PER")),
                 "EPS": st.column_config.NumberColumn(help=_help("EPS")),
                 "ROE(%)": st.column_config.NumberColumn(help=_help("ROE")),
                 "시가총액($B)": st.column_config.NumberColumn(help=_help("시가총액")),
                 "전고점대비(%)": st.column_config.NumberColumn(help=_help("전고점대비")),
+                "MDD1년(%)": st.column_config.NumberColumn(help=_help("MDD(1년)")),
                 "RSI(14)": st.column_config.NumberColumn(help=_help("RSI(14)")),
                 "MACD상태": st.column_config.TextColumn(help=_help("MACD")),
                 "이평배열": st.column_config.TextColumn(help=_help("이평배열")),
@@ -460,9 +474,11 @@ with tab_main:
             sector_table.append({
                 "섹터": sector, "순위": rank, "티커": r["ticker"], "종목명": r.get("name", ""),
                 "시가총액($B)": r.get("market_cap_usd_bil"), "현재가": r.get("price"),
-                "통화": r.get("currency"), "PER": r.get("per"), "EPS": r.get("eps"),
+                "통화": r.get("currency"), "PER": r.get("per"),
+                "포워드PER": r.get("fwd_per"), "EPS": r.get("eps"),
                 "ROE(%)": round(r["roe_pct"], 1) if r.get("roe_pct") is not None else None,
                 "전고점대비(%)": round(r["drawdown_pct"], 1) if r.get("drawdown_pct") is not None else None,
+                "MDD1년(%)": round(r["mdd_1y_pct"], 1) if r.get("mdd_1y_pct") is not None else None,
                 "RSI(14)": round(t["rsi14"], 1) if t.get("rsi14") is not None else None,
                 "RSI상태": t.get("rsi_regime", "N/A"),
                 "MACD상태": t.get("macd_regime", "N/A"),
@@ -472,10 +488,12 @@ with tab_main:
             sector_table, use_container_width=True, hide_index=True,
             column_config={
                 "PER": st.column_config.NumberColumn(help=_help("PER")),
+                "포워드PER": st.column_config.NumberColumn(help=_help("포워드PER")),
                 "EPS": st.column_config.NumberColumn(help=_help("EPS")),
                 "ROE(%)": st.column_config.NumberColumn(help=_help("ROE")),
                 "시가총액($B)": st.column_config.NumberColumn(help=_help("시가총액")),
                 "전고점대비(%)": st.column_config.NumberColumn(help=_help("전고점대비")),
+                "MDD1년(%)": st.column_config.NumberColumn(help=_help("MDD(1년)")),
                 "RSI(14)": st.column_config.NumberColumn(help=_help("RSI(14)")),
                 "MACD상태": st.column_config.TextColumn(help=_help("MACD")),
             },
@@ -502,9 +520,11 @@ with tab_main:
             "통화": e.get("currency") if e else None,
             "시가총액($B)": round(e["market_cap"] / 1e9, 2) if e and e.get("market_cap") else None,
             "PER": e.get("per") if e else None,
+            "포워드PER": e.get("fwd_per") if e else None,
             "EPS": e.get("eps") if e else None,
             "ROE(%)": round(e["roe_pct"], 1) if e and e.get("roe_pct") is not None else None,
             "전고점대비(%)": round(e["drawdown_pct"], 1) if e and e.get("drawdown_pct") is not None else None,
+            "MDD1년(%)": round(e["mdd_1y_pct"], 1) if e and e.get("mdd_1y_pct") is not None else None,
             "RSI(14)": round(t["rsi14"], 1) if t.get("rsi14") is not None else None,
             "RSI상태": t.get("rsi_regime", "N/A"),
             "MACD상태": t.get("macd_regime", "N/A"),
@@ -513,9 +533,11 @@ with tab_main:
         strat_table, use_container_width=True, hide_index=True,
         column_config={
             "PER": st.column_config.NumberColumn(help=_help("PER")),
+            "포워드PER": st.column_config.NumberColumn(help=_help("포워드PER")),
             "EPS": st.column_config.NumberColumn(help=_help("EPS")),
             "ROE(%)": st.column_config.NumberColumn(help=_help("ROE")),
             "전고점대비(%)": st.column_config.NumberColumn(help=_help("전고점대비")),
+            "MDD1년(%)": st.column_config.NumberColumn(help=_help("MDD(1년)")),
             "RSI(14)": st.column_config.NumberColumn(help=_help("RSI(14)")),
             "MACD상태": st.column_config.TextColumn(help=_help("MACD")),
         },
