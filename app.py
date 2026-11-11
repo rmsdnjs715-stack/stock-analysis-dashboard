@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import html
+from datetime import datetime
 from typing import Any
 
 import streamlit as st
@@ -227,44 +228,71 @@ def _help(name: str) -> str:
     return f"공식: {info['공식']}\n해석: {info['해석']}"
 
 
+# --------------------------------------------------------- 마지막 갱신 시각 ----
+# st.cache_data는 캐시 히트 시 함수 본문을 건너뛰므로, 본문 안에서 시각을 찍어두면
+# "진짜로 API를 다시 호출한 시각"만 기록된다 (페이지를 새로고침한 시각과는 다름).
+# st.cache_data의 캐시는 세션이 아니라 서버 프로세스 전체에서 공유되는 캐시라
+# (다른 탭에서 이미 데이터를 불러왔으면 새 탭은 캐시 히트만 하고 로더 본문을 안 탐),
+# 기록도 session_state(세션별)가 아니라 st.cache_resource(프로세스 전체 공유 싱글톤)에 둔다.
+@st.cache_resource
+def _fetch_log() -> dict[str, str]:
+    return {}
+
+
+def _mark_fetched(key: str) -> None:
+    _fetch_log()[key] = datetime.now().strftime("%H:%M:%S")
+
+
+def _fetched_at(key: str) -> str:
+    return _fetch_log().get(key, "아직 조회 전")
+
+
 # ---------------------------------------------------------------- 캐시된 조회 ----
 @st.cache_data(ttl=300, show_spinner="코스피·코스닥 지표 조회 중...")
 def _load_kr_index() -> list[dict[str, Any]]:
+    _mark_fetched("kr_index")
     return indicators.collect_kr_index()
 
 
 @st.cache_data(ttl=300, show_spinner="반도체 지수(SOX)·환율 조회 중...")
 def _load_semi() -> list[dict[str, Any]]:
+    _mark_fetched("semi")
     return indicators.collect_semi()
 
 
 @st.cache_data(ttl=600, show_spinner="빅테크 Top20 스캔 중... (35개 종목 재무+기술적지표 조회라 1분 이상 걸릴 수 있습니다)")
 def _load_top20() -> dict[str, Any]:
+    _mark_fetched("top20")
     return screener.run()
 
 
 @st.cache_data(ttl=600, show_spinner="전략자산 목록 조회 중...")
 def _load_strategic_assets() -> dict[str, Any]:
+    _mark_fetched("strategic_assets")
     return screener.fetch_watchlist([a["ticker"] for a in config.STRATEGIC_ASSETS])
 
 
 @st.cache_data(ttl=600, show_spinner="전체 섹터별 Top3 스캔 중... (11개 섹터, 50여개 종목 조회)")
 def _load_sector_leaders() -> dict[str, Any]:
+    _mark_fetched("sector_leaders")
     return screener.fetch_theme_leaders(config.SECTOR_CANDIDATES, config.SECTOR_TOP_N)
 
 
 @st.cache_data(ttl=300, show_spinner="美 매크로 지표 조회 중...")
 def _load_macro() -> list[dict[str, Any]]:
+    _mark_fetched("macro")
     return indicators.collect_macro()
 
 
 @st.cache_data(ttl=300, show_spinner="글로벌 유동성 지표 조회 중...")
 def _load_liquidity() -> list[dict[str, Any]]:
+    _mark_fetched("liquidity")
     return indicators.collect_liquidity()
 
 
 @st.cache_data(ttl=300, show_spinner="시장 심리 지표 조회 중...")
 def _load_sentiment() -> list[dict[str, Any]]:
+    _mark_fetched("sentiment")
     return indicators.collect_sentiment()
 
 
@@ -354,18 +382,21 @@ def _render_stock_card(entry: dict[str, Any] | None, name: str, ticker: str) -> 
 
 
 # ------------------------------------------------------------------- 헤더 ----
+# 캡션에 "마지막 갱신" 시각을 보여줘야 해서, 캡션을 그리기 전에 데이터부터 불러온다
+# (st.cache_data는 캐시 히트 시 본문을 건너뛰므로 _mark_fetched가 먼저 갱신돼 있어야 함).
+kr_index_rows = _load_kr_index()
+semi_rows = _load_semi()
+
 col_title, col_refresh = st.columns([5, 1])
 with col_title:
     st.title("📈 주식 분석 대시보드")
     st.caption("무료 API(FRED·Yahoo·KRX) 기반 자동 수집 · 5~10분 캐시")
+    st.caption(f"코스피·코스닥/반도체지수 마지막 갱신: {_fetched_at('kr_index')} · {_fetched_at('semi')}")
 with col_refresh:
     st.write("")
     if st.button("🔄 지금 새로고침", use_container_width=True):
         _clear_all_cache()
         st.rerun()
-
-kr_index_rows = _load_kr_index()
-semi_rows = _load_semi()
 
 metric_specs = [
     _find(kr_index_rows, "코스피"),
@@ -409,6 +440,7 @@ with tab_main:
             _render_stock_card(pinned.get(stock["ticker"]), stock["name"], stock["ticker"])
 
     st.subheader(f"빅테크 Top{config.TOP_N} (USD 시가총액 기준)")
+    st.caption(f"마지막 갱신: {_fetched_at('top20')}")
     krw_rate = scan.get("krw_per_usd")
     if krw_rate:
         st.caption(f"원/달러 환율(스캔 시점): {krw_rate:,.2f} — 005930.KS·000660.KS는 이 환율로 USD 환산 후 랭킹")
@@ -463,9 +495,10 @@ with tab_main:
             for hf in history_failed:
                 st.write(f"- {hf['ticker']}: {hf['reason']}")
 
+    sector_scan = _load_sector_leaders()
     st.subheader("전체 시장 섹터별 Top3 (핀비즈 히트맵 스타일)")
     st.caption("기술·헬스케어·금융 등 시장 전체 11개 섹터를 대표 대형주 후보군 기준으로 훑어봅니다. 아래 전략자산 List와 종목이 겹쳐도 상관없습니다.")
-    sector_scan = _load_sector_leaders()
+    st.caption(f"마지막 갱신: {_fetched_at('sector_leaders')}")
     by_sector = sector_scan.get("by_theme", {})
     sector_table = []
     for sector, entries in by_sector.items():
@@ -506,9 +539,10 @@ with tab_main:
             for f in sector_failed:
                 st.write(f"- {f['ticker']}: {f.get('error', '')}")
 
+    strat = _load_strategic_assets()
     st.subheader("전략자산 (정부 지분투자 List)")
     st.caption("시가총액 랭킹이 아니라 정부 지분 참여 발표 순서 그대로 고정 표시합니다.")
-    strat = _load_strategic_assets()
+    st.caption(f"마지막 갱신: {_fetched_at('strategic_assets')}")
     strat_entries = strat.get("entries", {})
     strat_table = []
     for a in config.STRATEGIC_ASSETS:
@@ -550,16 +584,23 @@ with tab_main:
 
     st.subheader("코스피·코스닥 상세")
     st.caption("PBR·외국인 순매수는 KRX 무료 계정(KRX_ID/KRX_PW 환경변수) 설정 시에만 자동 수집됩니다.")
+    st.caption(f"마지막 갱신: {_fetched_at('kr_index')}")
     _render_indicator_table(kr_index_rows)
 
 with tab_macro:
-    _render_indicator_table(_load_macro())
+    macro_rows = _load_macro()
+    st.caption(f"마지막 갱신: {_fetched_at('macro')}")
+    _render_indicator_table(macro_rows)
 
 with tab_liquidity:
-    _render_indicator_table(_load_liquidity())
+    liquidity_rows = _load_liquidity()
+    st.caption(f"마지막 갱신: {_fetched_at('liquidity')}")
+    _render_indicator_table(liquidity_rows)
 
 with tab_sentiment:
-    _render_indicator_table(_load_sentiment())
+    sentiment_rows = _load_sentiment()
+    st.caption(f"마지막 갱신: {_fetched_at('sentiment')}")
+    _render_indicator_table(sentiment_rows)
 
 with tab_manual:
     st.caption("무료·안정적 API가 없어 자동 수집하지 않고 참고용으로만 표시하는 항목입니다.")

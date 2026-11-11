@@ -17,3 +17,8 @@ output/
 
 # 로컬 도구 설정
 .claude/settings.local.json
+
+# 개인 계좌·인증 정보 (공개 저장소 — 절대 커밋 금지)
+토스실시간조회/
+현황/
+.claude/skills/update-portfolio-sheet/
